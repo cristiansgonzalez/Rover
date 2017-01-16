@@ -1,0 +1,34 @@
+
+mode=1000
+la:	
+	ch1 = getvalue(_PLSINC, 1)
+	ch2 = getvalue(_PLSINC, 2)
+	'ch3 = getvalue(_PLSINC, 3)
+	'ch4 = getvalue(_PLSINC, 4)
+	
+
+	SetCommand(_GO, 1, ch1)'Izquierda
+	SetCommand(_GO, 2, ch2)'Derecha
+	
+	Tick=GetValue(_Time)
+	T2 = getvalue(_TEMP, 2) 'Gets left motor amperage value
+	T1 = getvalue(_TEMP, 1) 'Gets left motor amperage value
+	V2 = getvalue(_VOLTS, 2) 'Gets left motor amperage value
+	V1 = getvalue(_VOLTS, 1) 'Gets left motor amperage value
+	
+	LAmp = getvalue(_MOTAMPS, 2) 'Gets left motor amperage value
+	RAmp = getvalue(_MOTAMPS, 1) '’Gets right motor amperage value
+	LPower = getvalue(_MOTPWR, 2) '’Gets left motor power value
+	RPower = getvalue(_MOTPWR, 1) '’Gets right motor power value
+	LRpm = getvalue(_ABSPEED, 2) '’Gets left motor speed value
+	RRpm = getvalue(_ABSPEED, 1) '’Gets right motor speed value 29
+	LEncoder = getvalue(_RELSPEED, 2) '’Gets left motor encoder value
+	REncoder = getvalue(_RELCNTR, 1) '’Gets left motor encoder value
+	
+	
+	
+	'print(Tick,"\t","EL:",ch1,"\t","ER:",ch2,"\t","TemL:",T1,"\t","TemR:",T2,"\t","VoltL:",V1,"\t","VoltR:",V2,"\t","AmpL",LAmp,"\t","AmpR",RAmp,"\t",LRpm,"\t", RRpm,"\t", LEncoder,"\n\r") '’Prints back data
+	'print(Tick,"\t","EL:",ch1,"\t","ER:",ch2,"\t","TemL:",T1,"\t","TemR:",T2,"\t","VoltL:",V1,"\t","VoltR:",V2,"\t","AmpL",LAmp,"\t","AmpR",RAmp,"\n\r") '’Prints back data
+	print(",",T2,",",T1,",",V2,",",V1,",",-RRpm,",",-LRpm,",","\n\r") '’Prints back data
+	wait(100)
+	goto la
