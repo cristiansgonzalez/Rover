@@ -48,7 +48,7 @@ T_ch1=0
 T_ch2=0
 T_ch3=0
 T_ch4=0
-USB_Datos=['a','b','c','d','f','g']
+USB_Datos=['a','b','c','d','f','g','h','i']
 
 NAVIO_RCOUTPUT_1 = 3
 NAVIO_RCOUTPUT_2 = 4
@@ -177,15 +177,26 @@ sps = 250  # 250 samples per second
 # Set this to ADS1015 or ADS1115 depending on the ADC you are using!
 adc = ADS1x15(ic=ADS1115)
 
+
+R = 0
+G = 0
+B = 4095
+pwm.setPWM(0, 0, B)
+print "LED is yellow"
+time.sleep(1)
+
+
+
 while d:
 
 	#=======CONTROL========
 	input_value = GPIO.input(7)	
+#	print "\nValor entrada: %d" % (int(input_value))
 	vector.append(input_value)
 	time.sleep(0.5);
 	grabartxt()
 	decoder_ppm()
-#	print(T_ch1,T_ch2,T_ch3,T_ch4)
+	print(T_ch1,T_ch2,T_ch3,T_ch4)
 	#====== FIN CONTROL =====
 	
 	#======	MODO NEUTRO ==========
@@ -240,12 +251,12 @@ while d:
 		## SALIDA ENCODER ------------------------------
 	
 		pwm.setPWM(NAVIO_RCOUTPUT_1, 0, int(IZQUIERDO_OUT)); 
-#	print "\nIzquierdo Teclado: %d" % (int(IZQUIERDO_OUT))
+		#print "\nIzquierdo Teclado: %d" % (int(IZQUIERDO_OUT))
 #	print "Izquierdo Salida: %d" % (IZQUIERDO_OUT)
 	# time.sleep(1);
 	
 		pwm.setPWM(NAVIO_RCOUTPUT_2, 0, int(DERECHO_OUT));
-#	print "\nDerecho Teclado: %d" % (int(DERECHO_OUT))
+		#print "\nDerecho Teclado: %d" % (int(DERECHO_OUT))
 #	print "Derecho Salida: %d" % (DERECHO_OUT)
 	# time.sleep(1);
 	# ---------------------------------------------------
