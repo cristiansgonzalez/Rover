@@ -14,6 +14,7 @@ make
 */
 
 #include "Navio/MPU9250.h"
+#include "Navio/Ublox.h"
 #include "Navio/Util.h"
 #include <stdlib.h>
 
@@ -57,6 +58,12 @@ const int HMC5883L_I2C_ADDR = 0x1E;
 #else
 #include <unistd.h>
 #endif
+//	GPS====================================
+std::vector<double> pos_data;
+Ublox gps;
+float Latitud, Longitud,LatitudRTK, LongitudRTK;
+// GPS FIN ======================
+short x,y,z;
 //================================ Options =====================================
 
 unsigned int samplingRate      = 1;      // 1 microsecond (can be 1,2,4,5,10)
@@ -69,7 +76,8 @@ bool verboseOutputEnabled      = true;   // Output channels values to console
 //============================ Objects & data ==================================
 
 float channels[4],pulse0;
-float buf_datosc[45];
+double Xm,Ym,yawc;
+float buf_datosc[70];
 float salidas[5];
 float ax, ay, az, gx, gy, gz, mx, my, mz, roll, pitch, yaw, YawActual,YawAnterior,yawa,dato1;
 char bufc[14][250], reply[50];
@@ -87,15 +95,18 @@ float girar=0.0, vi,bateria,TempDerecho,TempIzquierdo,IDerecha,IIzquierda,RpmDer
 float WDerecha,WIzquierda,RpmAntDerecha,RpmAntIzquierda,VR,VL,IAntDerecha,IAntIzquierda,bateriaAnt;
 struct timeval t_ini, t_fin;
 double secs;
-int i, n,n2;
+int i, n,n3,n4;
 
 int  cport_nr=24;        /* /dev/ttyACM0 roboteq */
-int  cport_nr3=25;        /* /dev/ttyACM1 arduino */
+int  cport_nr3=16;        /* /dev/ttyACM1 arduino */
+int  cport_nr4=25;        /* /dev/ttyACM1 GPS */
 int    bdrate=115200;       /* 115200 baud */
-int    bdrate3=9600;       /* 115200 baud */
+int    bdrate3=115200;       /* 115200 baud  9600 GPS*/
+int    bdrate4=9600;       /* 115200 baud  9600 RTK*/
 
 unsigned char buf[4096];
 unsigned char buf3[4096];
+unsigned char buf4[4096];
 char mode[]={'8','N','1',0};
 //============================== PPM decoder ===================================
 
@@ -121,11 +132,19 @@ unsigned int previousTick;
 unsigned int deltaTime;
 
 // CONSTANTES PID ==================================================
-float 	/*Kp=72.0, Ti=0.75, */Td=0.1667, Umin=-100.0, Umax=100.0, errorR=0.0,Referencia = 8.0, WtR=Referencia, WtL=Referencia, 
+float 	/*Kp=72.0, Ti=0.75, */Td=0.1667, Umin=-100.0, Umax=100.0, errorR=0.0,Referencia = 6, WtR=Referencia, WtL=Referencia, 
 		UpR=0.0, error_1R=0.0,YtR=0.0,UiR=0.0,UdR=0.0,Ui1R=0.0,UtR=0.0;
 float 	errorL=0.0, UpL=0.0, error_1L=0.0,YtL=0.0,UiL=0.0,UdL=0.0,Ui1L=0.0,UtL=0.0;
 float	KpR=0.51,KpL=2.3,TiR=0.75,TiL=0.75,t=0.0,conta=3.0,DeltaReferencia = 3000000/Ts;
 // PID ====================================================================
+
+// CONTASTEN PID YAW =====================================================
+float yawt=-(103*PI)/180, Uminy=-0.2, Umaxy=0.2, errory= 0.0, error_1y=0.0,Uty=0.0, Upy= 0.0,
+	  Kpy = 0.1, Uiy = 0.0,Udy = 0.0,Ui1y = 0.0,Tiy=0.75, V=0.0, L = 0.6, Vr = 0.0, Vi = 0.0,
+	  Tdy =0.1667;
+char teclado;
+
+//===== FIN PID ===================================================================
 int PIDMotor(float YtR,float YtL)
 {
 
@@ -177,6 +196,59 @@ int PIDMotor(float YtR,float YtL)
 }
 //FIN PID =================================================================
 
+// PID Yaw ================================================================
+
+int PIDYaw(float yaws)
+{
+/*	std::cin >> teclado;
+	if(teclado =='i')
+	{
+		Kpy=Kpy+0.01;
+	}
+	if(teclado == 'k')
+	{
+		Kpy = Kpy -0.01;
+	}
+	if(teclado == 'o')
+	{
+		Kpy = Kpy;
+	}
+*/
+	errory=(yawt-(yaws*PI)/180);
+
+	Upy=Kpy*errory; //proportional action
+	Uiy=Ui1y+(Kpy*(Ts/1000000.0)/Tiy)*errory; //integral action
+	Udy=(Kpy*Tdy/(Ts/1000000.0))*(errory-error_1y); //differential action
+	Uty=Upy+Uiy+Udy; //total control action  ESTA ES LA ACCIÓN QUE SE ESCRIBE SOBRE EL MOTOR
+	
+	if (Uty<Uminy)
+	{
+		Uty=Uminy;
+	}
+	if (Uty>Umaxy)
+	{
+		Uty=Umaxy;  //constraints
+	}
+//	UiR=UtR-UpR-UdR; //Anti Reset-Windup
+//	printf("Error: %2.5f Kpy: %2.5f Referencia: %2.5f Salida: %2.5f Upy: %2.5f\n", errory,Kpy,yawt,Uty,Upy);
+
+	error_1y=errory;
+	Ui1y=Uiy; //store for next sampling time
+
+	if(Uty>0)
+	{
+		V = (1/0.2)*Uty - 1;
+	}
+	if(Uty<0)
+	{
+		V = (1/0.2)*Uty + 1;
+	}
+	
+	Vr = -Uty*L + V;
+	Vi =  Uty*L + V;
+
+}
+// PID Yaw FIN ============================================================
 
 // i2c inicio--------------------------
 void selectDevice(int fd2, int addr, char * name)
@@ -216,9 +288,9 @@ int DatosI2C()
 	}
 	else
 	{
-		short x = (buf2[0] << 8) | buf2[1];
-        short y = (buf2[4] << 8) | buf2[5];
-		short z = (buf2[2] << 8) | buf2[3];
+		x = (buf2[0] << 8) | buf2[1];
+        y = (buf2[4] << 8) | buf2[5];
+		z = (buf2[2] << 8) | buf2[3];
            
 		angle = atan2(y, x) * 180 / M_PI;
 
@@ -229,7 +301,7 @@ int DatosI2C()
 		//printf("\n");
             
 //		printf("x=%d, y=%d, z=%d\n", x, y, z);
-//		printf("angle = %0.1f\n\n", angle);
+//		printf("angle = %0.1f\n", angle);
 	}
 }
 
@@ -255,6 +327,44 @@ int Rs232()
 	  
     }
 	//FIN LECTURA ROBOTEQ ==================================
+
+	n3 = RS232_PollComport(cport_nr3, buf3, 50);
+
+    if(n3 > 0)
+    {
+    	buf3[n3] = 0;   /* always put a "null" at the end of a string! */
+		for(i=0; i < n3; i++)
+      	{
+        	if(buf3[i] < 46)  /* replace unreadable control-codes by dots 48*/
+        {
+        	buf3[i] = '.';
+        }
+	}
+//	printf("received %i bytes: %s\n", n3, buf3);
+//	printf("received %i bytes: %s\n", n3, (char *)buf3);
+	  
+    }
+/*
+
+	n4 = RS232_PollComport(cport_nr4, buf4, 100);
+
+    if(n4 > 0)
+    {
+    	buf4[n] = 0;   /* always put a "null" at the end of a string! */
+/*		for(i=0; i < n4; i++)
+      	{
+        	if(buf4[i] < 46)  /* replace unreadable control-codes by dots 48*/
+ /*       {
+        	buf4[i] = '.';
+        }
+	}
+//	printf("received %i bytes: %s\n", n4, buf4);
+//	printf("received %i bytes: %s\n", n3, (char *)buf3);
+	  
+    }
+*/
+
+
 #ifdef _WIN32
 //    Sleep(10);
 #else
@@ -310,14 +420,32 @@ int CreateFile()
 	fputs("UdL\t",pFile);
 	fputs("UpL\t",pFile);
 	fputs("Ui1L\t",pFile);
-	fputs("t\t",pFile);
+	fputs("T\t",pFile);
 	fputs("KpL\t",pFile);
 	fputs("Referencia\t",pFile);
 	fputs("WtR\t",pFile);
 	fputs("WtL\t",pFile);
 	fputs("VR\t",pFile);
-	fputs("VL\n",pFile);
-	
+	fputs("VL\t",pFile);
+	fputs("Latitud\t",pFile);
+	fputs("Longitud\t",pFile);
+	fputs("x\t",pFile);
+	fputs("y\t",pFile);
+	fputs("Latitudbruto\t",pFile);
+	fputs("Longitudbruto\t",pFile);
+
+	fputs("yawt\t",pFile);
+	fputs("errory\t",pFile);
+	fputs("Uiy\t",pFile);
+	fputs("Udy\t",pFile);
+	fputs("Upy\t",pFile);
+	fputs("Uty\t",pFile);
+	fputs("Vr\t",pFile);
+	fputs("Vi\t",pFile);
+	fputs("IMUmx\t",pFile);
+	fputs("IMUmy\t",pFile);
+	fputs("IMUmz\n",pFile);
+
 	
 	//  ABRIR ARCHIVO DE LECTURA =======================================
 	fpa = fopen("ruta.txt","r");
@@ -334,17 +462,12 @@ int CreateFile()
 	
 }
 // ALMACENAMIENTO DE LOS DATOS ----------------------
-int Filerecovery()
+int Guardar()
 {
-      buf_datosc[0]=ax;
-      buf_datosc[1]=ay;
-      buf_datosc[2]=az;
-      buf_datosc[3]=gx;
-	  buf_datosc[4]=gy;
-      buf_datosc[5]=gz;
-      buf_datosc[6]=mx;
-      buf_datosc[7]=my;
-	  buf_datosc[8]=mz;
+
+      buf_datosc[6]=x;
+      buf_datosc[7]=y;
+	  buf_datosc[8]=z;
       buf_datosc[9]=salidas[2];
       buf_datosc[10]=salidas[3];
 	  buf_datosc[11]=salidas[4];
@@ -377,16 +500,30 @@ int Filerecovery()
 	  buf_datosc[37]=UpL;
 	  buf_datosc[38]=Ui1L;
 	  
-	  buf_datosc[39]=t;
+	  buf_datosc[39]=secs;
 	  buf_datosc[40]=KpL;
 	  buf_datosc[41]=Referencia;
 	  buf_datosc[42]=WtR;
 	  buf_datosc[43]=WtL;
 	  buf_datosc[44]=VR;
 	  buf_datosc[45]=VL;
+
+//	  buf_datosc[46]=Latitud;
+//	  buf_datosc[47]=Longitud;
+
+	  buf_datosc[48]=Xm;
+	  buf_datosc[49]=Ym;
 	  
-	  
-for (int i = 0; i <= 45; ++i)
+	  buf_datosc[52]=yawt;
+	  buf_datosc[53]=errory;
+	  buf_datosc[54]=Uiy;
+	  buf_datosc[55]=Udy;
+	  buf_datosc[56]=Upy;
+	  buf_datosc[57]=Uty;
+	  buf_datosc[58]=Vr;
+	  buf_datosc[59]=Vi;
+
+for (int i = 0; i <= 62; ++i)
       {
 //save new data in archive        
         sprintf(bufc[i], "%f", buf_datosc[i]);
@@ -417,7 +554,7 @@ int Automatico(float EntradaR,float EntradaL)
 	}
 	if(EntradaL<0 && EntradaL >=-100)
 	{
-		UL = -0.0580*EntradaL + 12.0;
+		UL = -0.0580*EntradaL + 6.0;
 	}
 	if(EntradaL==0)
 	{
@@ -427,12 +564,43 @@ int Automatico(float EntradaR,float EntradaL)
 	if(EntradaR>0 && EntradaR <=100)
 	{
 		//UR = -0.0650*(EntradaR*0.5689 + 0.2808) + 7.0;
-		UR = -0.0650*(EntradaR*0.6 - 1) + 7.0;
-		//UR = -0.0650*EntradaR + 7.0;
+		UR = -0.0163*EntradaR + 7.0;
 	}
 	if(EntradaR<0 && EntradaR >=-100)
 	{
-		UR = -0.0680*EntradaR + 11.0;
+		UR = -0.0163*EntradaR + 7.0;
+	}
+	if(EntradaR==0)
+	{
+		UR = 10;
+	}
+//	printf("Velocidad: %f UL: %f UR: %f\n",Velocidad,UL,UR);
+}
+
+int conversion(float EntradaR,float EntradaL)
+{
+	if(EntradaL>0 && EntradaL <=10)
+	{
+		UL = -0.5500*EntradaL + 6.0;
+	}
+	if(EntradaL<0 && EntradaL >=-10)
+	{
+		UL = -0.580*EntradaL + 12.0;
+	}
+	if(EntradaL==0)
+	{
+		UL = 10;
+	}
+	
+	if(EntradaR>0 && EntradaR <=10)
+	{
+		//UR = -0.0650*(EntradaR*0.5689 + 0.2808) + 7.0;
+		UR = -0.1750*EntradaR	 + 7.0;
+		//UR = -0.0650*EntradaR + 7.0;
+	}
+	if(EntradaR<0 && EntradaR >=-10)
+	{
+		UR = -0.680*EntradaR + 11.0;
 	}
 	if(EntradaR==0)
 	{
@@ -514,6 +682,257 @@ int YawGiro()
 	
 //	printf("Yaw: %4.4f Vueltas: %f \n",YawActual,vi);
 }
+
+int gps2utm(float Latitud,float Longitud,char lat_)
+{
+
+    /*!
+     * Transformación de las coordenadas geográficas a UTM
+     */
+    /// Sobre la geometría del delipsoide WGS84
+//    double a = 6378137.0;
+//    double b = 6356752.3142;
+
+    double a = 6378388.0;
+    double b = 6356911.946130;
+    
+// Sobre la geometria del elipsoide
+// excentricidad = e1; segunda excentricidad = e2
+ 
+    double e1, e2;
+ 
+    e1 = sqrt (pow(a,2) - pow(b, 2)) / a;
+    e2 = sqrt (pow(a,2) - pow(b, 2)) / b;
+ 
+// Radio polar de curvatura y aplanamiento
+// radio polar de curvatura = c; aplanamiento = alpha
+ 
+    double c, alpha;
+ 
+    c = (pow(a,2))/b;
+ 
+    alpha = (a -b) / a;
+ 
+    double long_gd_rad, lat_gd_rad;
+
+    long_gd_rad = (Longitud * PI)/180;
+    lat_gd_rad = (Latitud * PI) / 180;
+// Determinacion del Huso
+ 
+    double huso_dec;
+    int huso;
+    huso_dec = Longitud/6 + 31;
+ 
+    huso = int(huso_dec);
+ 
+// Obtencion del meridiano central del uso = lambda0
+ 
+    double lambda0, delta_lambda;
+ 
+    lambda0 = (huso * 6.0 - 183.0)*(PI/180.0);
+ 
+// Determinacion de la distancia angular que existe entre la longitud del punto (long_gd_rad) y
+// el meridiano central del huso (lamda0)
+ 
+    delta_lambda = long_gd_rad - lambda0;
+ 
+// Ecuaciones de Coticchia-Surace para el Problema Directo (Paso de Geograficas a UTM)
+// Calculo de Parametros
+ 
+    double A, xi, eta, nu, zeta, A1, A2, J2, J4, J6, alpha2, beta, gamma, B_phi;
+ 
+    A = cos(lat_gd_rad) * sin(delta_lambda); 
+    xi = 0.5 * log((1+A)/(1-A)); 
+    eta = atan(tan(lat_gd_rad)/cos(delta_lambda)) - lat_gd_rad; 
+    nu = (c*0.9996)/sqrt((1 + e2*e2*cos(lat_gd_rad)*cos(lat_gd_rad))); 
+    zeta = (e2*e2/2)*(xi*xi)*(cos(lat_gd_rad)*cos(lat_gd_rad)); 
+    A1 = sin(2.0*lat_gd_rad); 
+    A2 = A1 * (cos(lat_gd_rad)*cos(lat_gd_rad)); 
+    J2 = lat_gd_rad + A1/2.0; 
+    J4 = (3*J2 + A2)/4; 
+    J6 = (5*J4 + A2 * (cos(lat_gd_rad)*cos(lat_gd_rad)))/3; 
+    alpha2 = (3.0/4.0)*(e2*e2); 
+    beta = (5.0/3.0)*(alpha2*alpha2); 
+    gamma = (35.0/27.0)*(pow(alpha2,3)); 
+    B_phi = 0.9996 * c * (lat_gd_rad - alpha2 * J2 + beta * J4 - gamma * J6); 
+    Xm = xi*nu*(1+zeta/3.0)+500000.0; 
+    Ym = eta*nu*(1+zeta)+B_phi;
+
+    if (lat_ == 'S' || lat_ == 's')
+ 	{
+ 		Ym += 10000000.0;
+	}
+        
+//   printf("X = %f Y = %f\n",Xm,Ym);
+}
+
+
+int DesencriptarGPS()
+{
+	apuntador=999;
+	int cambio = 0;
+	cambio = 0;
+	float LongitudAnt, LatitudAnt;
+
+	for(int i=0;i<lon;i++)
+	{
+		aux1[i] = ' ';
+		aux2[i] = ' ';
+		aux3[i] = ' ';
+		aux4[i] = ' ';
+		serial[i]=' ';
+	}
+
+	for(int i=0;i<200;i++)
+	{
+		//if(buf3[i]==',' && buf3[i+1]=='A' && buf3[i+2]==',' && buf3[i+13]==',' && buf3[i+14]=='N' && buf3[i+15]==',' && buf3[i+27]==',' && buf3[i+28]=='W' && buf3[i+29]==',')
+		if(buf3[i]=='.' && buf3[i+1]=='A' && buf3[i+2]=='.' && buf3[i+13]=='.' && buf3[i+14]=='N' && buf3[i+15]=='.' && buf3[i+27]=='.' && buf3[i+28]=='W' && buf3[i+29]=='.')
+		{
+			cambio = 1;
+			apuntador = i+4;
+			i = 200;
+		}
+	}
+
+	for(int i=0;i<11;i++)
+	{
+		if(buf3[apuntador]=='.' && buf3[apuntador+1]=='N')
+		{
+			apuntador = apuntador + 3;
+			i=200;
+		}
+		else
+		{
+			aux1[i]=buf3[apuntador];
+		}
+		apuntador++;
+	}
+
+	for(int i=0;i<11;i++)
+	{
+		if(buf3[apuntador]=='.' && buf3[apuntador+1]=='W')
+		{
+			i=200;
+		}
+		else
+		{
+			aux2[i]=buf3[apuntador];
+		}
+		apuntador++;
+	}
+
+	if(cambio==1)
+	{
+/*		aux2[0]='7';
+		aux2[1]='5';
+*///		aux2[3]='1';
+//		aux1[0]='4';
+		aux3[0]=aux1[0];
+		aux4[0]=aux2[0];
+		aux4[1]=aux2[1];
+		Latitud = ((atof(aux1) - atof(aux3)*100)/60.0) + atof(aux3);
+		Longitud = (((atof(aux2) - atof(aux4)*100)/60.0) + atof(aux4))*-1;
+
+		if(Longitud>-70.0 || Longitud<-80.0 || Longitud==0.0)
+		{
+			Longitud=LongitudAnt;
+		}
+		if(Latitud<3.0 || Latitud>5.0 || Latitud==0.0)
+		{
+			Latitud=LatitudAnt;
+		}
+//		printf("\nMuestra: %d Latitud: %f Longitud: %f Latituddd: %s\n\n", correccion, Latitud, Longitud,aux2);
+//		printf("X = %f Y = %f\n",Xm,Ym);
+		LongitudAnt=Longitud;
+		LatitudAnt=Latitud;
+	}
+	buf_datosc[46]=Latitud;
+	buf_datosc[47]=Longitud;
+	buf_datosc[50]=atof(aux1);
+	buf_datosc[51]=atof(aux2);
+//	printf("longitud = %f\n",buf_datosc[50]);
+}
+
+int DesencriptarRTK()
+{
+	apuntador=999;
+	int cambio = 0;
+	cambio = 0;
+	float LongitudRTKAnt, LatitudRTKAnt;
+
+	for(int i=0;i<lon;i++)
+	{
+		aux1[i] = ' ';
+		aux2[i] = ' ';
+		aux3[i] = ' ';
+		aux4[i] = ' ';
+		serial[i]=' ';
+	}
+
+	for(int i=0;i<200;i++)
+	{
+		//if(buf3[i]==',' && buf3[i+1]=='A' && buf3[i+2]==',' && buf3[i+13]==',' && buf3[i+14]=='N' && buf3[i+15]==',' && buf3[i+27]==',' && buf3[i+28]=='W' && buf3[i+29]==',')
+		if(buf4[i]=='.' && buf4[i+1]=='A' && buf4[i+2]=='.' && buf4[i+15]=='.' && buf4[i+16]=='N' && buf4[i+17]=='.' && buf4[i+31]=='.' && buf4[i+32]=='W' && buf4[i+33]=='.')
+		{
+			cambio = 1;
+			apuntador = i+4;
+			i = 200;
+		}
+	}
+
+	for(int i=0;i<14;i++)
+	{
+		if(buf4[apuntador]=='.' && buf4[apuntador+1]=='N')
+		{
+			apuntador = apuntador + 3;
+			i=200;
+		}
+		else
+		{
+			aux1[i]=buf4[apuntador];
+		}
+		apuntador++;
+	}
+
+	for(int i=0;i<14;i++)
+	{
+		if(buf4[apuntador]=='.' && buf4[apuntador+1]=='W')
+		{
+			i=200;
+		}
+		else
+		{
+			aux2[i]=buf4[apuntador];
+		}
+		apuntador++;
+	}
+
+	if(cambio==1)
+	{
+/*		aux2[0]='7';
+		aux2[1]='5';
+		aux1[0]='4';
+*/		aux3[0]=aux1[0];
+		aux4[0]=aux2[0];
+		aux4[1]=aux2[1];
+		LatitudRTK = ((atof(aux1) - atof(aux3)*100)/60.0) + atof(aux3);
+		LongitudRTK = ((atof(aux2) - atof(aux4)*100)/60.0) + atof(aux4);
+/*		if(LongitudRTK<70.0 || LongitudRTK>80.0 || LongitudRTK==0.0)
+		{
+			LongitudRTK=LongitudAnt;
+		}
+		if(LatitudRTK<3.0 || LatitudRTK>5.0 || LatitudRTK==0.0)
+		{
+			LatitudRTK=LatitudAnt;
+		}
+*///		printf("\nMuestra: %d Latitud: %f Longitud: %f\n\n", correccion, LatitudRTK, LongitudRTK);
+		LongitudRTKAnt=LongitudRTK;
+		LatitudRTKAnt=LatitudRTK;
+	}
+//	buf_datosc[46]=LatitudRTK;
+//	buf_datosc[47]=LongitudRTK;
+}
+
 
 int DesencriptarRoboteq()
 {
@@ -637,22 +1056,21 @@ int DesencriptarRoboteq()
 	TempIzquierdo = atoi(aux3);
 	IDerecha = atoi(aux4)/10;
 	IIzquierda = atoi(aux5)/10;
-	if(IDerecha> 150 || IDerecha < -150)
-	{
-		IDerecha =IAntDerecha;
-	}
-	if(IIzquierda> 150 || IDerecha < -150)
-	{
-		IIzquierda =IAntIzquierda;
-	}
-	if(bateria> 20 || bateria < 1)
-	{
-		bateria = bateriaAnt;
-	}
+
 	deltatiempo = contador - contadorant;
 
 	RpmDerecha = (atoi(aux6)-RpmAntDerecha)*(2*3.1416)/(360*TsRoboteQ*deltatiempo*3.888888);
 	RpmIzquierda = (atoi(aux7)-RpmAntIzquierda)*(2*3.1416)/(360*TsRoboteQ*deltatiempo*3.888888);
+
+	if(bateria> 20 || bateria < 3)
+	{
+		bateria = bateriaAnt;
+		IIzquierda =IAntIzquierda;
+		IDerecha =IAntDerecha;
+		RpmAntDerecha = RpmDerecha;
+		RpmAntIzquierda = RpmIzquierda;
+	}
+	
 //	RpmDerecha = (atoi(aux6)-RpmAntDerecha)*(2*3.1416)/((360*Ts*3.888888)/1E6);
 //	RpmIzquierda = (atoi(aux7)-RpmAntIzquierda)*(2*3.1416)/((360*Ts*3.888888)/1E6);
 	
@@ -665,7 +1083,7 @@ int DesencriptarRoboteq()
 	
 //	printf("Baeria: %2.5f TempDerecho: %2.1f TempIzquierdo: %2.1f IDerecha: %3.1f IIzquierda: %3.1f RpmDerecha: %4.1f RpmIzquierda: %4.1f\n",bateria, TempDerecho,TempIzquierdo,IDerecha,IIzquierda,RpmDerecha,RpmIzquierda);
 //	printf("contador: %4.4f RpmDerecha: %4.4f RpmIzquierda: %4.4f\n RpmDerecha: %4.4f RpmIzquierda: %4.4f\n",contador,RpmDerecha,RpmIzquierda,RpmAntDerecha,RpmAntIzquierda);
-	
+//	printf("Bateria %f\n", bateria);
 	
 //	printf("Valor desencriptado: %s\n",serial);
 	
@@ -822,6 +1240,19 @@ int main(int argc, char *argv[])
 		return(0);
 	}
 
+	if(RS232_OpenComport(cport_nr3, bdrate3, mode))
+	{
+		printf("Can not open comport\n");
+		return(0);
+	}
+/*
+	if(RS232_OpenComport(cport_nr4, bdrate4, mode))
+	{
+		printf("Can not open comport\n");
+		return(0);
+	}
+*/
+	printf("paso las usb\n");
 	static const uint8_t outputEnablePin = RPI_GPIO_27;
 
     if (check_apm())
@@ -853,7 +1284,7 @@ int main(int argc, char *argv[])
     }
 
 	// Servo controller setup
-
+printf("paso el gpio\n");
 	PCA9685 pwm;
 	pwm.initialize();
 	pwm.setFrequency(servoFrequency);
@@ -872,33 +1303,52 @@ int main(int argc, char *argv[])
 	
     //-------------------------------------------------------------------------
 	imuLoop();
+	printf("paso imu loop\n");
 	YawActual=0;
 	YawAnterior=0;
 	DatosI2C();
+	printf("paso i2c\n");
 	YawGiro();
+	printf("paso giro yaw\n");
 	CreateFile();
     while(1) 
 	{
-		
 		gettimeofday(&t_ini, NULL);
+		
+		//LecturaGPS();		
 		gpioSetAlertFunc(ppmInputGpio, ppmOnEdge);
 		imu.getMotion9(&ax, &ay, &az, &gx, &gy, &gz, &mx, &my, &mz);
-		/*printf("Acc: %+7.3f %+7.3f %+7.3f  ", ax, ay, az);
-		printf("Gyr: %+8.3f %+8.3f %+8.3f  ", gx, gy, gz);
-		printf("Mag: %+7.3f %+7.3f %+7.3f\n", mx, my, mz);
-		printf("%4.f %4.d", channels[1], salidas[1]);*/
+		//printf("Acc: %+7.3f %+7.3f %+7.3f  \n", ax, ay, az);
+		buf_datosc[0]=ax;
+		buf_datosc[1]=ay;
+		buf_datosc[2]=az;
+		buf_datosc[3]=gx;
+		buf_datosc[4]=gy;
+		buf_datosc[5]=gz;
+		buf_datosc[60]=mx;
+	  	buf_datosc[61]=my;
+	  	buf_datosc[62]=mz;
+
+		//printf("Gyr: %+8.3f %+8.3f %+8.3f  ", gx, gy, gz);
+		//printf("Mag: %+7.3f %+7.3f %+7.3f\n", mx, my, mz);
+		//printf("%4.f %4.d", channels[1], salidas[1]);
 		
-		Rs232();// REcibe datos desde ROBOTEQ
+		Rs232();// Recibe datos desde ROBOTEQ y del GPS
+		DesencriptarGPS();     //Adecua datos del GPS
+		gps2utm(Latitud,Longitud,'n');
+//		DesencriptarRTK();
 		DesencriptarRoboteq(); // Adecua datos de RoboteQ
 		
 		imuLoop();
+
+
+		yawc=pow(atan( (-my*cos(roll) + mz*sin(roll) ) / (mx*cos(pitch) + my*sin(pitch)*sin(roll)+ mz*sin(pitch)*cos(roll)) ) ,2);
+		//printf("Yawc: %f\n", yawc);
 		// datos i2c ============
-		DatosI2C();
+		DatosI2C();	
 		// datos i2c fin ===============
 		YawGiro();
-		
-		
-		
+				
 		//  NEUTRO----------------------
 		if (channels[2]<930 && channels[2]>920)
 		{
@@ -934,7 +1384,9 @@ int main(int argc, char *argv[])
 			//	   DERECHO	-------------
 			if (channels[1] < 2085 && channels[1] > 1535)  //ADELANTE
 			{
-				salidas[1]=-0.0127*channels[1]+29.8390;
+
+//				salidas[1]=-0.0127*channels[1]+29.8390;	
+				salidas[1]=-0.0032*channels[1]+11.8841;	
 				salidas[3]=0.1818*channels[1]-279.0909;
 				salidas[5]=0.0545*channels[1]-28.7273;   //duty cycle
 			}
@@ -954,19 +1406,19 @@ int main(int argc, char *argv[])
 			//  SALIDAS ----------------
 			pwm.setPWMmS(NAVIO_RCOUTPUT_1, salidas[1]); //salida derecha
 			pwm.setPWMmS(NAVIO_RCOUTPUT_2, salidas[0]);	//salida izquierda
-//			printf("\nDerecha: %2.4f Izquierda: %2.4f Derecha: %2.4f Izquierda: %2.4f\n",salidas[1],salidas[0],salidas[3],salidas[2]);
+	//		printf("\nDerecha: %2.4f Izquierda: %2.4f Derecha: %2.4f Izquierda: %2.4f\n",salidas[1],salidas[0],salidas[3],salidas[2]);
 		
 			//printf("Derecho: %4d , %4d, \n",d-5,d-5);
 			// FIN SALIDAS -------------
 		}
-	
+
 		//  MODO AUTOMATICO  ------------------------
+		PIDYaw(angle);
 		if (channels[2]<2100 && channels[2]> 2080)
 		{
 			//RutaRover(); //salidas Velocidad,Velocidad
-			//PIDMotor(RpmDerecha,RpmIzquierda); //salida UtR,UtL; Entradas Velocidades angulares
-			
-
+			PIDMotor(RpmDerecha,RpmIzquierda); //salida UtR,UtL; Entradas Velocidades angulares FUNCIONA
+/*			
 			if (channels[0] < 2100 && channels[0] > 1600) //ADELANTE
 			{
 				WtL = 10;
@@ -999,9 +1451,12 @@ int main(int argc, char *argv[])
 				WtR = 0;
 				VR = 20;
 			}
-
-			Automatico(VR,VL);
-			//Automatico(UtR,UtL);	
+*/
+			//Automatico(VR,VL);
+			//conversion(UtR,UtL);
+			//Automatico(UtR,UtL);  fuciona pasa de porcentaje a salida de los motores
+			PIDYaw(angle);
+			conversion(Vr,Vi);
 			pwm.setPWMmS(NAVIO_RCOUTPUT_1, UR); //salida derecha
 			pwm.setPWMmS(NAVIO_RCOUTPUT_2, UL);	//salida izquierda
 
@@ -1009,20 +1464,25 @@ int main(int argc, char *argv[])
 		// FIN AUTOMATICO   -------------------------
 	
 		//Modos de grabacion y seguridad
-	
+		
+		// GGRABAR DATOS
+
+		if (channels[3]<1535 && channels[3]> 1515)
+		{
+			correccion = 0;
+			Guardar();
+		}
+
 		// FRENO DE EMERGENCIA Y CREACION DEL ARCHIVO
 		if (channels[3]<937 && channels[3]> 917)
 		{
-			CreateFile();
-			vi = 0.0;
+			if(correccion>=2)
+			{
+//				CreateFile();
+			}
+			correccion=correccion+1;
 		}
-	
-		// GGRABAR DATOS
-		if (channels[3]<1535 && channels[3]> 1515)
-		{
-			Filerecovery();
-		}
-		correccion++;
+		
 		gettimeofday(&t_fin, NULL); // final del contador, para una iteracion.
 
 		secs = timeval_diff(&t_fin, &t_ini);
@@ -1038,6 +1498,7 @@ int main(int argc, char *argv[])
 	
 	//sleep(1);
 }
+
 
 
 
