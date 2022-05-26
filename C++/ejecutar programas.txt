@@ -1,1 +1,0 @@
-gcc profe.cpp -p profe -lm  //ejecitar programa profe
