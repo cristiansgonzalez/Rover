@@ -1,15 +1,24 @@
-MODULES = AccelGyroMag ADC AHRS Barometer FRAM GPS LED Multithread PPM-decoder Servo
+CC = g++
+NAVIO = ../../Navio
+
+PIGPIO_PATH := $(PIGPIO_PATH)
+
+LIB = -L$(PIGPIO_PATH)
+INCLUDES = -I ../.. -I$(PIGPIO_PATH)
 
 all:
-	for dir in $(MODULES); do \
-	cd $$dir; \
-	($(MAKE) ); \
-	cd ..; \
-	done
-	
+	$(CC) $(INCLUDES) $(LIB) principal.cpp $(NAVIO)/MPU9250.cpp $(NAVIO)/rs232.c $(NAVIO)/PCA9685.cpp $(NAVIO)/I2Cdev.cpp $(NAVIO)/gpio.cpp $(NAVIO)/Util.cpp -o principal -lrt -lpthread -lpigpio || $(MAKE) pigpio
+
 clean:
-	for dir in $(MODULES); do \
-	cd $$dir; \
-	($(MAKE) clean); \
-	cd ..; \
-	done
+	rm principal
+
+pigpio:
+	@echo ""
+	@echo "Note that pigpio library is required."
+	@echo "Warning! Use with caution. Consider to remove after trying this example out."
+	@echo "To install:"
+	@echo "sudo apt-get update"
+	@echo "sudo apt-get install pigpio"
+	@echo ""
+	@echo "Visit http://abyz.co.uk/rpi/pigpio/ for details."
+	@echo ""
