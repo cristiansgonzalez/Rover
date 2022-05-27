@@ -29,7 +29,19 @@ La Raspberry Actúa como tarjeta master, es el cerebro de todo, se hacen todos l
 
 # Ejecutar el codigo en C++
 
+Se descarga la carpeta `C++` y se ejecuta primero el makefile y despues si se ejecuta el codigo principal
+
+```
+$ make Makefile
+$ cc Principal.c
+```
+
 # Ejecutar el codigo en python 
+
+Se descarga la carpeta `Rover_python` y se ejecuta 
+```
+$ python codigo.py
+```
 
 ## Autor
 
